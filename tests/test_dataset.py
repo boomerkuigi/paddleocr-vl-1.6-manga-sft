@@ -1,6 +1,6 @@
 import json
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -8,6 +8,7 @@ from PIL import Image
 from manga_sft.dataset import (
     deterministic_group_split,
     iter_manga109_regions,
+    materialize_archive,
     read_jsonl,
     safe_extract_zip,
     stable_sample_id,
@@ -80,6 +81,32 @@ def test_safe_zip_extraction_rejects_traversal(tmp_path: Path):
         handle.writestr("../escape.txt", "no")
     with pytest.raises(ValueError, match="Unsafe path"):
         safe_extract_zip(archive, tmp_path / "out")
+
+
+def test_materialize_archive_creates_valid_regular_copy(tmp_path: Path):
+    source = tmp_path / "mounted" / "source.zip"
+    source.parent.mkdir()
+    with zipfile.ZipFile(source, "w") as handle:
+        handle.writestr("Manga109-s/annotations/book.xml", "<book />")
+
+    result = materialize_archive(
+        source, tmp_path / "cache" / "source.zip", chunk_size=7
+    )
+
+    assert result.path.is_file()
+    assert result.path.read_bytes() == source.read_bytes()
+    assert result.size_bytes == source.stat().st_size
+    assert len(result.sha256) == 64
+    with zipfile.ZipFile(result.path) as handle:
+        assert handle.read("Manga109-s/annotations/book.xml") == b"<book />"
+
+
+def test_materialize_archive_rejects_invalid_zip(tmp_path: Path):
+    source = tmp_path / "not-a-zip.zip"
+    source.write_bytes(b"not a zip archive")
+
+    with pytest.raises(zipfile.BadZipFile, match="not a readable ZIP"):
+        materialize_archive(source, tmp_path / "cache" / "not-a-zip.zip")
 
 
 def test_end_to_end_crop_preparation(tmp_path: Path):

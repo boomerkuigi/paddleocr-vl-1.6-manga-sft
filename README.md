@@ -202,8 +202,11 @@ Before launch:
 The local fixture tests do not prove the Job identity/token can mount the gated
 repository or that its real archive layout is recognized. Run this first. It
 uses the verified `cpu-basic` Jobs flavor, validates token access and the mount,
-extracts the archive, counts every usable region with the deterministic split,
-and loads a real crop from each split without materializing the crop dataset.
+streams the lazily mounted archive into regular ephemeral storage, validates its
+byte count, ZIP structure, and SHA-256, then extracts it. It counts every usable
+region with the deterministic split and loads a real crop from each split
+without materializing the crop dataset. Staging avoids random-access ZIP reads
+directly against the lazy repository mount; no Manga109-s data is uploaded.
 
 > **WARNING: THIS STARTS BILLABLE CPU COMPUTE.** At the current $0.01/hour rate,
 > the two-hour timeout is a hard compute ceiling of about $0.02.

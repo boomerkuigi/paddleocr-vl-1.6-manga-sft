@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODE="${1:-materialize}"
 : "${MANGA109_ROOT:=/data/manga109s}"
+: "${MANGA109_ARCHIVE_CACHE:=/workspace/data/manga109s-archive-cache}"
 
 if [[ "${MODE}" != "materialize" && "${MODE}" != "preflight" ]]; then
   echo "Usage: $0 [materialize|preflight]" >&2
@@ -22,6 +23,7 @@ if [[ -z "${annotations_dir}" || -z "${images_dir}" ]]; then
   fi
   python scripts/extract_manga109s.py \
     --archive "${manga_archives[0]}" \
+    --stage-directory "${MANGA109_ARCHIVE_CACHE}" \
     --output /workspace/data/manga109s-extracted
   SOURCE_ROOT=/workspace/data/manga109s-extracted
 fi

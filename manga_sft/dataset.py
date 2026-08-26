@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import Iterable, Iterator
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image
 
@@ -25,6 +26,56 @@ class Sample:
     split: str
     source: str = "Manga109-s"
     image_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class MaterializedArchive:
+    path: Path
+    size_bytes: int
+    sha256: str
+
+
+def materialize_archive(
+    source: Path, destination: Path, chunk_size: int = 8 * 1024 * 1024
+) -> MaterializedArchive:
+    """Stream a lazily mounted archive into a regular local file and validate it."""
+    source = source.resolve()
+    destination = destination.resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Archive does not exist: {source}")
+    if source == destination:
+        raise ValueError("Archive source and staging destination must differ")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(f"{destination.name}.partial")
+    digest = hashlib.sha256()
+    copied = 0
+    with source.open("rb") as source_handle, partial.open("wb") as destination_handle:
+        for chunk in iter(lambda: source_handle.read(chunk_size), b""):
+            destination_handle.write(chunk)
+            digest.update(chunk)
+            copied += len(chunk)
+        destination_handle.flush()
+        os.fsync(destination_handle.fileno())
+
+    source_size = source.stat().st_size
+    if copied != source_size:
+        raise OSError(
+            f"Archive staging size mismatch: read {copied} bytes from a {source_size}-byte source"
+        )
+    if not zipfile.is_zipfile(partial):
+        raise zipfile.BadZipFile(
+            f"Staged archive is not a readable ZIP: {partial} ({copied} bytes)"
+        )
+
+    partial.replace(destination)
+    return MaterializedArchive(
+        path=destination,
+        size_bytes=copied,
+        sha256=digest.hexdigest(),
+    )
 
 
 def safe_extract_zip(archive: Path, destination: Path) -> None:
