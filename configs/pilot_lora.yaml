@@ -1,0 +1,11 @@
+# Contingency only: use if the full-fine-tune GPU smoke test exceeds 24 GB.
+inherits: pilot.yaml
+method:
+  type: lora
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: all-linear
+training:
+  output_dir: checkpoints/pilot-lora
+

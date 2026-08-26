@@ -1,0 +1,14 @@
+# Direct dependency lock tested during the 2026-08 preparation pass.
+torch==2.6.0
+torchvision==0.21.0
+transformers==5.16.0
+accelerate==1.14.0
+huggingface-hub==1.28.0
+safetensors==0.8.0
+numpy==2.5.2
+Pillow==12.3.0
+PyYAML==6.0.3
+Jinja2==3.1.6
+pytest==9.1.1
+peft==0.20.0
+manga-ocr==0.1.16

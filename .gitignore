@@ -1,0 +1,49 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*token*
+credentials*
+
+# Python and tools
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Copyrighted/local data and generated artifacts
+data/raw/
+data/prepared/
+data/cache/
+data/linguistik_hard_cases/images/
+checkpoints/
+outputs/
+reports/
+wandb/
+runs/
+cache/
+tmp/
+
+# Large model files
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.pdparams
+*.tar
+*.tar.gz
+*.zip
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+

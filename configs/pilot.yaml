@@ -1,0 +1,58 @@
+project:
+  name: paddleocr-vl-1.6-manga-sft
+  seed: 42
+model:
+  id: PaddlePaddle/PaddleOCR-VL-1.6
+  revision: c5630abae1d940eafe0697512a0325494b02ab42
+  trust_remote_code: true
+  prompt: "OCR:"
+  dtype: bfloat16
+  attention_implementation: sdpa
+  gradient_checkpointing: true
+  max_length: 2048
+  min_pixels: 112896
+  max_pixels: 1003520
+method:
+  type: full
+data:
+  dataset_version: v2026
+  manifest_dir: data/prepared/manifests
+  train: train.jsonl
+  validation: validation.jsonl
+  test: test.jsonl
+  normalization: preserve
+  verify_images: true
+training:
+  output_dir: checkpoints/pilot-full
+  epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-5
+  optim: adamw_torch
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  bf16: true
+  tf32: true
+  dataloader_num_workers: 4
+  eval_strategy: steps
+  eval_steps: 500
+  save_strategy: steps
+  save_steps: 500
+  save_total_limit: 3
+  logging_steps: 10
+  report_to: none
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  max_steps: -1
+  resume_from_checkpoint: auto
+hub:
+  push_to_hub: false
+  private: true
+  model_id_env: HF_MODEL_REPO
