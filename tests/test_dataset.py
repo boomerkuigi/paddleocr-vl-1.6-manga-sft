@@ -13,7 +13,7 @@ from manga_sft.dataset import (
     stable_sample_id,
     validate_no_leakage,
 )
-from scripts.prepare_dataset import prepare
+from scripts.prepare_dataset import inspect_source, prepare
 
 
 def test_group_split_is_deterministic_and_disjoint():
@@ -95,6 +95,12 @@ def test_end_to_end_crop_preparation(tmp_path: Path):
             f'text="台詞{index}"/></page></book>',
             encoding="utf-8",
         )
+    preflight = inspect_source(source, seed=42)
+    assert preflight["status"] == "source_preflight_ok"
+    assert preflight["sizes"] == {"train": 1, "validation": 1, "test": 1}
+    assert preflight["sample_crops_loaded"] == 3
+    assert preflight["materialized_crops"] is False
+
     output = tmp_path / "prepared"
     summary = prepare(source, output, seed=42)
     assert summary["sizes"] == {"train": 1, "validation": 1, "test": 1}

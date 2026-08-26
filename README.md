@@ -89,9 +89,10 @@ python scripts/validate_environment.py --config configs/smoke.yaml
 python scripts/train.py --config configs/smoke.yaml --validate-only
 ```
 
-The first real GPU action should still be a one-step run of `configs/smoke.yaml`.
-That is the only conclusive check for model forward/backward tensor shapes,
-24 GB peak VRAM, optimizer allocation, and checkpoint writing.
+`configs/smoke.yaml` is format-only and uses generated fixtures. The first real
+GPU action uses `configs/gpu_smoke.yaml` with the prepared Manga109-s manifests.
+That one-step run is the only conclusive check for model forward/backward tensor
+shapes, 24 GB peak VRAM, optimizer allocation, and checkpoint writing.
 
 ## Pilot training
 
@@ -114,7 +115,8 @@ in `configs/pilot_lora.yaml`; QLoRA is deliberately not the first experiment.
 | Gradient checkpointing | enabled |
 | Attention | PyTorch SDPA |
 | Maximum sequence length | 2048; oversize samples fail rather than truncate |
-| Eval / checkpoint interval | 500 optimizer steps |
+| Validation interval | 2,500 optimizer steps (about twice per epoch at the expected size) |
+| Recovery checkpoint interval | 500 optimizer steps |
 | Retained checkpoints | 3 |
 | Seed | 42 |
 
@@ -126,8 +128,14 @@ python scripts/train.py --config configs/pilot.yaml
 
 Training receives only train and validation datasets. The test manifest is read
 solely for leakage checks and is never passed to `Trainer`. Existing
-`checkpoint-*` directories resume automatically. The final processor and model
-are saved beneath `checkpoints/pilot-full/final/`.
+`checkpoint-*` directories resume automatically. Each 500-step save is also
+pushed as the private Hub repo's rolling `last-checkpoint`. A fresh Job resumes
+that Hub checkpoint only when `HF_RESUME_FROM_HUB=1` is explicitly set, avoiding
+accidental reuse by a later experiment. Because Transformers requires built-in
+best-model loading to couple save/eval intervals, `train.py` evaluates the final
+weights when needed and reloads the prior best checkpoint if it is better before
+saving `checkpoints/pilot-full/final/`.
+The quantitative rationale is in [`docs/PREFLIGHT_REVIEW.md`](docs/PREFLIGHT_REVIEW.md).
 
 ## Evaluation and disagreement analysis
 
@@ -178,7 +186,7 @@ Add only real, authorized problem crops. The known gold reading
 `アナタ専用ウシ乳マヤでちゅよ〜` is included without a fabricated image. These
 samples remain evaluation-only.
 
-## Future Hugging Face Job
+## Future Hugging Face Jobs
 
 Before launch:
 
@@ -189,8 +197,55 @@ Before launch:
 5. Replace `<HF_USER>` below. The GitHub repository must be public or readable
    without placing a GitHub credential in the command.
 
-> **WARNING: THE FOLLOWING COMMAND STARTS BILLABLE GPU COMPUTE. DO NOT RUN IT
-> UNTIL A PAID ONE-STEP SMOKE TEST HAS BEEN AUTHORIZED.**
+### 1. Gated-dataset preflight
+
+The local fixture tests do not prove the Job identity/token can mount the gated
+repository or that its real archive layout is recognized. Run this first. It
+uses the verified `cpu-basic` Jobs flavor, validates token access and the mount,
+extracts the archive, counts every usable region with the deterministic split,
+and loads a real crop from each split without materializing the crop dataset.
+
+> **WARNING: THIS STARTS BILLABLE CPU COMPUTE.** At the current $0.01/hour rate,
+> the two-hour timeout is a hard compute ceiling of about $0.02.
+
+```bash
+hf jobs run \
+  --name paddleocr-vl-1-6-manga-data-preflight \
+  --flavor cpu-basic \
+  --timeout 2h \
+  --secrets HF_TOKEN \
+  --env MANGA109_ROOT=/data/manga109s \
+  --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
+  python:3.11-slim \
+  bash -lc 'set -euo pipefail; apt-get update >/dev/null; apt-get install -y --no-install-recommends ca-certificates git >/dev/null; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_dataset_preflight.sh'
+```
+
+### 2. One-step GPU smoke
+
+Only after the CPU preflight succeeds, run the real-manifest one-step smoke.
+
+> **WARNING: THIS STARTS BILLABLE GPU COMPUTE.**
+
+```bash
+hf jobs run \
+  --name paddleocr-vl-1-6-manga-gpu-smoke \
+  --flavor l4x1 \
+  --timeout 3h \
+  --secrets HF_TOKEN \
+  --env PUSH_TO_HUB=0 \
+  --env MANGA109_ROOT=/data/manga109s \
+  --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
+  pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
+  bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_job_entrypoint.sh configs/gpu_smoke.yaml'
+```
+
+### 3. Three-epoch training
+
+The training Job prepares the private data, trains, uploads rolling recovery
+checkpoints, selects the best evaluated weights, uploads the final model, and
+then terminates. It deliberately does not install or run baseline evaluators.
+
+> **WARNING: THIS STARTS BILLABLE GPU COMPUTE.**
 
 ```bash
 hf jobs run \
@@ -205,16 +260,30 @@ hf jobs run \
   bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_job_entrypoint.sh configs/pilot.yaml'
 ```
 
-The entrypoint installs dependencies, safely extracts the official mounted
-`Manga109s_released_2026_05_21.zip`, prepares the gated data locally,
-validates, resumes/saves checkpoints, trains, evaluates the held-out test set,
-evaluates all four models sequentially, uploads the final model plus a Hub-safe
-benchmark bundle to the private model repository, then exits. Manga109-s gold
-text, image paths, annotations, and crops are excluded from that upload; raw
-model predictions and aggregate metrics are retained. Any failed command stops
-the job. The explicit 40-hour ceiling limits the worst
-case, and Hugging Face releases compute when the process reaches a terminal
-state.
+The explicit 40-hour ceiling limits the worst case, and Hugging Face releases
+compute when the process reaches a terminal state.
+
+### 4. Held-out benchmark
+
+Run this only after verifying the final model exists in the private destination.
+It remounts Manga109-s and rebuilds crops ephemerally because the test data may
+not be redistributed or persisted in a public repository. Each model is loaded
+sequentially. Only gold-free predictions and aggregate metrics are uploaded.
+
+> **WARNING: THIS STARTS BILLABLE GPU COMPUTE.**
+
+```bash
+hf jobs run \
+  --name paddleocr-vl-1-6-manga-benchmark \
+  --flavor l4x1 \
+  --timeout 12h \
+  --secrets HF_TOKEN \
+  --env HF_MODEL_REPO=<HF_USER>/PaddleOCR-VL-1.6-For-Manga \
+  --env MANGA109_ROOT=/data/manga109s \
+  --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
+  pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
+  bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_benchmark_entrypoint.sh'
+```
 
 ## Runtime and cost estimates
 
@@ -230,15 +299,18 @@ kernel behavior can change them materially.
 | A10G 24 GB (large) | 13–22 h | $1.50/h | $19.50–$33.00 |
 | A100 80 GB | 5–9 h | $2.50/h | $12.50–$22.50 |
 
-The table is training-only. Sequential four-model held-out evaluation and final
-uploads may add roughly 2–6 hours (very approximately). The L4 command's hard
-40-hour ceiling is a maximum compute exposure of about $32 at the listed rate,
-not an expected cost.
+The table is training-only. The less frequent validation cadence removes roughly
+24–30 redundant full validation passes compared with the original 500-step
+proposal; the broad training estimate is retained until the GPU timing smoke.
+The separate L4 benchmark is provisionally estimated at 3–10 hours ($2.40–$8),
+with a 12-hour/$9.60 hard ceiling. The training Job's 40-hour ceiling remains a
+$32 maximum exposure, not an expected cost.
 
-Start with an L4 24 GB one-step smoke: it has BF16 support, more host RAM and
-disk than A10G-small, and the lowest listed 24 GB rate. If full fine-tuning OOMs,
-record peak memory, retry with `pilot_lora.yaml`, or move to A100 only after the
-failure is understood. See [`docs/COSTS.md`](docs/COSTS.md).
+Start with the CPU dataset preflight, then the L4 24 GB one-step smoke. L4 has
+BF16 support, more host RAM and disk than A10G-small, and the lowest listed 24 GB
+rate. If full fine-tuning OOMs, record peak memory, retry with
+`pilot_lora.yaml`, or move to A100 only after the failure is understood. See
+[`docs/COSTS.md`](docs/COSTS.md).
 
 ## Output map
 

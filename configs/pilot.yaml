@@ -41,13 +41,19 @@ training:
   tf32: true
   dataloader_num_workers: 4
   eval_strategy: steps
-  eval_steps: 500
+  # About two evaluations per epoch for the expected 80k-102k training crops.
+  # Recovery checkpoints remain more frequent than full validation passes.
+  eval_steps: 2500
   save_strategy: steps
   save_steps: 500
   save_total_limit: 3
   logging_steps: 10
   report_to: none
-  load_best_model_at_end: true
+  # Transformers requires save_steps to be a multiple of eval_steps when this
+  # built-in switch is true. train.py performs equivalent final selection
+  # explicitly so 500-step recovery saves can coexist with 2500-step evals.
+  load_best_model_at_end: false
+  select_best_checkpoint_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false
   max_steps: -1

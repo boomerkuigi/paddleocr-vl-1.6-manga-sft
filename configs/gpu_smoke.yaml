@@ -1,0 +1,17 @@
+# One optimizer step on the real prepared Manga109-s manifests. This is the
+# first GPU run after the CPU-only gated-dataset preflight, not a quality test.
+inherits: pilot.yaml
+project:
+  name: paddleocr-vl-1.6-manga-sft-gpu-smoke
+training:
+  output_dir: checkpoints/gpu-smoke
+  epochs: 1
+  gradient_accumulation_steps: 1
+  eval_strategy: "no"
+  save_strategy: steps
+  save_steps: 1
+  save_total_limit: 1
+  load_best_model_at_end: false
+  select_best_checkpoint_at_end: false
+  max_steps: 1
+  resume_from_checkpoint: false

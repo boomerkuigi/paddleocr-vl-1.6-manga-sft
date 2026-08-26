@@ -45,6 +45,22 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("training.max_steps may not be zero")
     if int(config["project"]["seed"]) < 0:
         raise ValueError("project.seed must be non-negative")
+    training = config.get("training", {})
+    if training.get("select_best_checkpoint_at_end", False):
+        if training.get("load_best_model_at_end", False):
+            raise ValueError(
+                "Use either load_best_model_at_end or select_best_checkpoint_at_end, not both"
+            )
+        if training.get("eval_strategy") != "steps" or training.get("save_strategy") != "steps":
+            raise ValueError(
+                "select_best_checkpoint_at_end currently requires step-based evaluation and saving"
+            )
+        eval_steps = int(training.get("eval_steps", 0))
+        save_steps = int(training.get("save_steps", 0))
+        if eval_steps <= 0 or save_steps <= 0 or eval_steps % save_steps:
+            raise ValueError(
+                "eval_steps must be a positive multiple of save_steps so every evaluation has a checkpoint"
+            )
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -67,4 +83,3 @@ def resolve_project_path(config_file: str | Path, value: str | Path) -> Path:
         return value_path
     project_root = Path(config_file).resolve().parent.parent
     return (project_root / value_path).resolve()
-

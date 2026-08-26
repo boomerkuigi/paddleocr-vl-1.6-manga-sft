@@ -24,6 +24,69 @@ def auto_checkpoint(output_dir: Path) -> str | None:
     return str(max(checkpoints)[1]) if checkpoints else None
 
 
+def hub_checkpoint(model_id: str | None) -> str | None:
+    """Resolve the Hub's rolling recovery checkpoint only when explicitly requested."""
+    enabled = os.environ.get("HF_RESUME_FROM_HUB", "").strip().lower()
+    if enabled not in {"1", "true", "yes"} or not model_id:
+        return None
+    from huggingface_hub import snapshot_download
+
+    snapshot = Path(
+        snapshot_download(
+            repo_id=model_id,
+            repo_type="model",
+            allow_patterns=["last-checkpoint/**"],
+            token=os.environ.get("HF_TOKEN"),
+        )
+    )
+    checkpoint = snapshot / "last-checkpoint"
+    if not (checkpoint / "trainer_state.json").is_file():
+        raise FileNotFoundError(
+            f"HF_RESUME_FROM_HUB was requested but {model_id} has no usable last-checkpoint"
+        )
+    return str(checkpoint)
+
+
+def select_best_checkpoint(trainer, training_cfg: dict) -> str | None:
+    """Load the best evaluated save while allowing more frequent recovery saves."""
+    if not training_cfg.get("select_best_checkpoint_at_end", False):
+        return None
+    metric_name = str(training_cfg.get("metric_for_best_model", "eval_loss"))
+    if not metric_name.startswith("eval_"):
+        metric_name = f"eval_{metric_name}"
+    final_metrics = next(
+        (
+            entry
+            for entry in reversed(trainer.state.log_history)
+            if entry.get("step") == trainer.state.global_step and metric_name in entry
+        ),
+        None,
+    )
+    if final_metrics is None:
+        final_metrics = trainer.evaluate()
+    final_metric = float(final_metrics[metric_name])
+    previous_best = trainer.state.best_metric
+    greater_is_better = bool(training_cfg.get("greater_is_better", False))
+    final_is_better = previous_best is None or (
+        final_metric > previous_best if greater_is_better else final_metric < previous_best
+    )
+    if final_is_better:
+        trainer.state.best_metric = final_metric
+        return f"final-step-{trainer.state.global_step}"
+    checkpoint = trainer.state.best_model_checkpoint
+    if not checkpoint:
+        raise RuntimeError(
+            "Best-checkpoint selection was requested but no prior evaluated checkpoint was saved. "
+            "Ensure eval_steps coincides with a save step and occurs before training ends."
+        )
+    # Transformers 5.16 requires save_steps to be a multiple of eval_steps when
+    # load_best_model_at_end is enabled, which prevents saves every 500 with
+    # evaluations every 2500. The pinned Trainer's loader correctly handles both
+    # full and PEFT checkpoints, so invoke it explicitly after training.
+    trainer._load_best_model()
+    return str(checkpoint)
+
+
 def write_release_files(
     output_dir: Path,
     project_root: Path,
@@ -206,8 +269,14 @@ def main() -> None:
         processing_class=processor,
     )
     resume_setting = training_cfg.get("resume_from_checkpoint", "auto")
-    resume = auto_checkpoint(output_dir) if resume_setting == "auto" else resume_setting
+    if resume_setting == "auto":
+        resume = auto_checkpoint(output_dir) or hub_checkpoint(hub_model_id)
+    else:
+        resume = resume_setting
     result = trainer.train(resume_from_checkpoint=resume or None)
+    selected_checkpoint = select_best_checkpoint(trainer, training_cfg)
+    if selected_checkpoint:
+        result.metrics["selected_best_checkpoint"] = selected_checkpoint
     trainer.save_model(str(output_dir / "final"))
     processor.save_pretrained(str(output_dir / "final"))
     trainer.save_metrics("train", result.metrics)

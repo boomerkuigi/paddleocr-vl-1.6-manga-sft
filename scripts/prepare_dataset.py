@@ -115,13 +115,86 @@ def prepare(root: Path, output: Path, seed: int) -> dict:
     return summary
 
 
+def inspect_source(root: Path, seed: int) -> dict:
+    """Validate the real source layout and count usable regions without writing crops."""
+    annotations_root, images_root = locate_roots(root)
+    xml_files = sorted(annotations_root.rglob("*.xml"))
+    if not xml_files:
+        raise FileNotFoundError(f"No Manga109-s XML files below {annotations_root}")
+    book_splits = deterministic_group_split((path.stem for path in xml_files), seed=seed)
+    sizes: Counter[str] = Counter()
+    filtered = Counter()
+    page_paths: dict[tuple[str, str], Path] = {}
+    image_sizes: dict[Path, tuple[int, int]] = {}
+    crop_checks: set[str] = set()
+
+    for xml_path in xml_files:
+        book = xml_path.stem
+        split = book_splits[book]
+        for page, bbox, _gold in iter_manga109_regions(xml_path):
+            key = (book, page)
+            page_path = page_paths.get(key)
+            if page_path is None:
+                page_path = find_image(images_root, book, page)
+                page_paths[key] = page_path
+            dimensions = image_sizes.get(page_path)
+            if dimensions is None:
+                with Image.open(page_path) as source:
+                    dimensions = source.size
+                image_sizes[page_path] = dimensions
+            width, height = dimensions
+            clipped = [
+                max(0, min(width, bbox[0])),
+                max(0, min(height, bbox[1])),
+                max(0, min(width, bbox[2])),
+                max(0, min(height, bbox[3])),
+            ]
+            if clipped[2] - clipped[0] < 10 or clipped[3] - clipped[1] < 10:
+                filtered["invalid_after_clipping"] += 1
+                continue
+            sizes[split] += 1
+            if split not in crop_checks:
+                with Image.open(page_path) as source:
+                    crop = source.convert("RGB").crop(tuple(clipped))
+                    crop.load()
+                crop_checks.add(split)
+
+    missing_splits = {"train", "validation", "test"} - crop_checks
+    if missing_splits:
+        raise ValueError(f"No usable crop could be loaded for splits: {sorted(missing_splits)}")
+    return {
+        "status": "source_preflight_ok",
+        "source": "Manga109-s",
+        "split_method": "book-grouped deterministic 80/10/10",
+        "seed": seed,
+        "xml_books": len(xml_files),
+        "referenced_pages": len(page_paths),
+        "sizes": {split: sizes[split] for split in ("train", "validation", "test")},
+        "book_counts": {
+            split: sum(1 for assigned in book_splits.values() if assigned == split)
+            for split in ("train", "validation", "test")
+        },
+        "filtering": dict(filtered),
+        "sample_crops_loaded": len(crop_checks),
+        "materialized_crops": False,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create non-redistributable manga text crops")
     parser.add_argument("--manga109-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("data/prepared"))
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Validate the real archive layout and count usable regions without writing crops",
+    )
     args = parser.parse_args()
-    summary = prepare(args.manga109_root.resolve(), args.output.resolve(), args.seed)
+    if args.preflight_only:
+        summary = inspect_source(args.manga109_root.resolve(), args.seed)
+    else:
+        summary = prepare(args.manga109_root.resolve(), args.output.resolve(), args.seed)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
