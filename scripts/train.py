@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
+import time
 from pathlib import Path
 
 import yaml
@@ -18,9 +20,11 @@ def auto_checkpoint(output_dir: Path) -> str | None:
     if output_dir.is_dir():
         for path in output_dir.glob("checkpoint-*"):
             try:
-                checkpoints.append((int(path.name.rsplit("-", 1)[1]), path))
+                step = int(path.name.rsplit("-", 1)[1])
             except ValueError:
                 continue
+            if (path / "trainer_state.json").is_file():
+                checkpoints.append((step, path))
     return str(max(checkpoints)[1]) if checkpoints else None
 
 
@@ -35,16 +39,49 @@ def hub_checkpoint(model_id: str | None) -> str | None:
         snapshot_download(
             repo_id=model_id,
             repo_type="model",
-            allow_patterns=["last-checkpoint/**"],
+            allow_patterns=["last-checkpoint/**", "best-checkpoint/**"],
             token=os.environ.get("HF_TOKEN"),
         )
     )
     checkpoint = snapshot / "last-checkpoint"
-    if not (checkpoint / "trainer_state.json").is_file():
+    state_path = checkpoint / "trainer_state.json"
+    if not state_path.is_file():
         raise FileNotFoundError(
             f"HF_RESUME_FROM_HUB was requested but {model_id} has no usable last-checkpoint"
         )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    best_step = state.get("best_global_step")
+    current_step = state.get("global_step")
+    if best_step is not None:
+        if int(best_step) == int(current_step):
+            state["best_model_checkpoint"] = str(checkpoint)
+        else:
+            best_checkpoint = snapshot / "best-checkpoint"
+            has_best_weights = any(
+                (best_checkpoint / name).is_file()
+                for name in ("model.safetensors", "model.safetensors.index.json", "pytorch_model.bin")
+            )
+            if not has_best_weights:
+                raise FileNotFoundError(
+                    "The Hub resume checkpoint references an older best step, but the private "
+                    "repository has no usable best-checkpoint weights"
+                )
+            state["best_model_checkpoint"] = str(best_checkpoint)
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return str(checkpoint)
+
+
+def ensure_private_hub_repo(model_id: str, token: str | None, api=None):
+    """Create the destination if needed and refuse to upload to a public repo."""
+    if api is None:
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=token)
+    api.create_repo(repo_id=model_id, repo_type="model", private=True, exist_ok=True)
+    info = api.model_info(repo_id=model_id, token=token)
+    if not bool(getattr(info, "private", False)):
+        raise RuntimeError(f"Refusing to upload training artifacts because {model_id} is not private")
+    return api
 
 
 def select_best_checkpoint(trainer, training_cfg: dict) -> str | None:
@@ -110,6 +147,7 @@ def write_release_files(
 
 
 def main() -> None:
+    script_started = time.perf_counter()
     parser = argparse.ArgumentParser(description="Fine-tune PaddleOCR-VL 1.6 on manga crops")
     parser.add_argument("--config", type=Path, default=Path("configs/pilot.yaml"))
     parser.add_argument(
@@ -126,6 +164,7 @@ def main() -> None:
     training_cfg = config["training"]
     manifest_dir = resolve_project_path(args.config, config["data"]["manifest_dir"])
     output_dir = resolve_project_path(args.config, training_cfg["output_dir"])
+    manifests_started = time.perf_counter()
     train_rows = read_jsonl(
         manifest_dir / config["data"]["train"], config["data"].get("verify_images", True)
     )
@@ -138,6 +177,7 @@ def main() -> None:
     validate_no_leakage({"train": train_rows, "validation": validation_rows, "test": test_rows})
     if not train_rows or not validation_rows:
         raise ValueError("Train and validation manifests must both be non-empty")
+    manifest_validation_seconds = time.perf_counter() - manifests_started
 
     import torch
     from transformers import (
@@ -145,6 +185,7 @@ def main() -> None:
         AutoModelForImageTextToText,
         AutoProcessor,
         Trainer,
+        TrainerCallback,
         TrainingArguments,
         set_seed,
     )
@@ -181,16 +222,30 @@ def main() -> None:
 
     if not torch.cuda.is_available():
         raise RuntimeError("Actual PaddleOCR-VL 1.6 training requires a CUDA GPU; use --validate-only here")
+    # The official flat config explicitly uses untied embeddings. Transformers
+    # 5.16's compatibility conversion otherwise restores its class default of
+    # True, even though both checkpoint tensors intentionally differ.
+    architecture.tie_word_embeddings = False
+    architecture.text_config.tie_word_embeddings = False
+
+    torch.cuda.reset_peak_memory_stats()
+    _, total_gpu_memory = torch.cuda.mem_get_info()
     dtype = getattr(torch, model_cfg.get("dtype", "bfloat16"))
+    model_load_started = time.perf_counter()
     model = AutoModelForImageTextToText.from_pretrained(
         model_cfg["id"],
-        torch_dtype=dtype,
+        config=architecture,
+        dtype=dtype,
         attn_implementation=model_cfg.get("attention_implementation", "sdpa"),
         **common,
     )
     model.config.use_cache = False
     if model_cfg.get("gradient_checkpointing", True):
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    torch.cuda.synchronize()
+    model_load_seconds = time.perf_counter() - model_load_started
+    model_gpu_allocated_bytes = torch.cuda.memory_allocated()
+    model_gpu_reserved_bytes = torch.cuda.memory_reserved()
 
     if config["method"]["type"] == "lora":
         from peft import LoraConfig, get_peft_model
@@ -214,6 +269,11 @@ def main() -> None:
     push_to_hub = bool(args.push_to_hub or hub_cfg.get("push_to_hub", False))
     if push_to_hub and not hub_model_id:
         raise ValueError("HF_MODEL_REPO must be set when pushing to the Hub")
+    hub_api = None
+    if push_to_hub:
+        if not bool(hub_cfg.get("private", True)):
+            raise ValueError("Full training requires hub.private: true")
+        hub_api = ensure_private_hub_repo(hub_model_id, os.environ.get("HF_TOKEN"))
 
     arguments = TrainingArguments(
         output_dir=str(output_dir),
@@ -259,6 +319,89 @@ def main() -> None:
         prompt=model_cfg.get("prompt", "OCR:"),
         max_length=int(model_cfg.get("max_length", 2048)),
     )
+    class OptimizerStepTimer(TrainerCallback):
+        def __init__(self) -> None:
+            self.current_start = None
+            self.events: list[tuple[int, object, object]] = []
+
+        def on_step_begin(self, args, state, control, **kwargs):
+            self.current_start = torch.cuda.Event(enable_timing=True)
+            self.current_start.record()
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if self.current_start is None:
+                return
+            end = torch.cuda.Event(enable_timing=True)
+            end.record()
+            self.events.append((int(state.global_step), self.current_start, end))
+            self.current_start = None
+
+        def summary(self, excluded: int) -> dict:
+            torch.cuda.synchronize()
+            measurements = [
+                {"optimizer_step": step, "seconds": start.elapsed_time(end) / 1000.0}
+                for step, start, end in self.events
+            ]
+            steady = [item["seconds"] for item in measurements[excluded:]]
+            if not steady:
+                raise RuntimeError("No steady-state optimizer steps were recorded")
+            return {
+                "optimizer_steps_recorded": len(measurements),
+                "excluded_startup_steps": excluded,
+                "average_optimizer_step_seconds_excluding_startup": statistics.fmean(steady),
+                "median_optimizer_step_seconds_excluding_startup": statistics.median(steady),
+                "min_optimizer_step_seconds_excluding_startup": min(steady),
+                "max_optimizer_step_seconds_excluding_startup": max(steady),
+                "optimizer_step_seconds": measurements,
+            }
+
+    class BestCheckpointHubCallback(TrainerCallback):
+        def __init__(self, api, model_id: str, token: str | None) -> None:
+            self.api = api
+            self.model_id = model_id
+            self.token = token
+            self.upload = None
+
+        def on_save(self, args, state, control, **kwargs):
+            if state.best_global_step != state.global_step:
+                return
+            if self.upload is not None and not self.upload.done():
+                self.upload.result()
+            checkpoint = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+            self.upload = self.api.upload_folder(
+                repo_id=self.model_id,
+                repo_type="model",
+                folder_path=str(checkpoint),
+                path_in_repo="best-checkpoint",
+                commit_message=f"Update best checkpoint at step {state.global_step}",
+                ignore_patterns=[
+                    "optimizer.pt",
+                    "scheduler.pt",
+                    "scaler.pt",
+                    "rng_state*.pth",
+                    "trainer_state.json",
+                ],
+                token=self.token,
+                run_as_future=True,
+            )
+
+        def finish(self) -> None:
+            if self.upload is not None:
+                self.upload.result()
+
+    callbacks = []
+    timing_cfg = config.get("timing", {})
+    step_timer = None
+    if timing_cfg.get("enabled", False):
+        step_timer = OptimizerStepTimer()
+        callbacks.append(step_timer)
+    best_checkpoint_callback = None
+    if push_to_hub:
+        best_checkpoint_callback = BestCheckpointHubCallback(
+            hub_api, hub_model_id, os.environ.get("HF_TOKEN")
+        )
+        callbacks.append(best_checkpoint_callback)
+
     trainer = Trainer(
         model=model,
         args=arguments,
@@ -266,18 +409,55 @@ def main() -> None:
         eval_dataset=ManifestDataset(validation_rows),
         data_collator=collator,
         processing_class=processor,
+        callbacks=callbacks,
     )
     resume_setting = training_cfg.get("resume_from_checkpoint", "auto")
     if resume_setting == "auto":
         resume = auto_checkpoint(output_dir) or hub_checkpoint(hub_model_id)
     else:
         resume = resume_setting
+    training_started = time.perf_counter()
     result = trainer.train(resume_from_checkpoint=resume or None)
+    torch.cuda.synchronize()
+    training_seconds = time.perf_counter() - training_started
+    if best_checkpoint_callback is not None:
+        best_checkpoint_callback.finish()
     selected_checkpoint = select_best_checkpoint(trainer, training_cfg)
     if selected_checkpoint:
         result.metrics["selected_best_checkpoint"] = selected_checkpoint
-    trainer.save_model(str(output_dir / "final"))
-    processor.save_pretrained(str(output_dir / "final"))
+    final_save_started = time.perf_counter()
+    trainer.save_model(str(output_dir), _internal_call=True)
+    processor.save_pretrained(str(output_dir))
+    final_save_seconds = time.perf_counter() - final_save_started
+    peak_gpu_allocated_bytes = torch.cuda.max_memory_allocated()
+    peak_gpu_reserved_bytes = torch.cuda.max_memory_reserved()
+    timing_summary = {
+        "manifest_validation_seconds": manifest_validation_seconds,
+        "model_load_seconds": model_load_seconds,
+        "training_seconds": training_seconds,
+        "final_save_seconds": final_save_seconds,
+        "model_gpu_allocated_bytes": model_gpu_allocated_bytes,
+        "model_gpu_reserved_bytes": model_gpu_reserved_bytes,
+        "peak_gpu_allocated_bytes": peak_gpu_allocated_bytes,
+        "peak_gpu_reserved_bytes": peak_gpu_reserved_bytes,
+        "total_gpu_memory_bytes": total_gpu_memory,
+        "peak_gpu_allocated_gib": peak_gpu_allocated_bytes / (1024**3),
+        "peak_gpu_reserved_gib": peak_gpu_reserved_bytes / (1024**3),
+    }
+    if step_timer is not None:
+        step_summary = step_timer.summary(int(timing_cfg.get("exclude_first_optimizer_steps", 1)))
+        timing_summary.update(step_summary)
+        result.metrics["average_optimizer_step_seconds_excluding_startup"] = step_summary[
+            "average_optimizer_step_seconds_excluding_startup"
+        ]
+    result.metrics.update(
+        {
+            "model_load_seconds": model_load_seconds,
+            "training_wall_seconds": training_seconds,
+            "peak_gpu_allocated_gib": timing_summary["peak_gpu_allocated_gib"],
+            "peak_gpu_reserved_gib": timing_summary["peak_gpu_reserved_gib"],
+        }
+    )
     trainer.save_metrics("train", result.metrics)
     trainer.save_state()
     write_release_files(
@@ -288,11 +468,22 @@ def main() -> None:
         len(validation_rows),
         len(test_rows),
     )
+    hub_upload_seconds = 0.0
     if push_to_hub:
-        trainer.push_to_hub(
+        trainer._finish_current_push()
+        hub_upload_started = time.perf_counter()
+        hub_api.upload_folder(
+            repo_id=hub_model_id,
+            repo_type="model",
+            folder_path=str(output_dir),
             commit_message="Complete PaddleOCR-VL 1.6 manga pilot",
-            dataset="Manga109-s (local/gated; images not redistributed)",
+            ignore_patterns=["checkpoint-*", "checkpoint-*/**"],
+            token=os.environ.get("HF_TOKEN"),
         )
+        hub_upload_seconds = time.perf_counter() - hub_upload_started
+    timing_summary["hub_upload_seconds"] = hub_upload_seconds
+    timing_summary["script_total_seconds"] = time.perf_counter() - script_started
+    print("TRAINING_TIMING_JSON=" + json.dumps(timing_summary, sort_keys=True))
 
 
 if __name__ == "__main__":

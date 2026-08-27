@@ -46,6 +46,16 @@ def validate_config(config: dict[str, Any]) -> None:
     if int(config["project"]["seed"]) < 0:
         raise ValueError("project.seed must be non-negative")
     training = config.get("training", {})
+    timing = config.get("timing", {})
+    if timing.get("enabled", False):
+        max_steps = int(training.get("max_steps", -1))
+        excluded = int(timing.get("exclude_first_optimizer_steps", 1))
+        if max_steps <= 1:
+            raise ValueError("timing runs require training.max_steps greater than one")
+        if excluded < 0 or excluded >= max_steps:
+            raise ValueError(
+                "timing.exclude_first_optimizer_steps must be non-negative and below max_steps"
+            )
     if training.get("select_best_checkpoint_at_end", False):
         if training.get("load_best_model_at_end", False):
             raise ValueError(

@@ -35,6 +35,22 @@ def test_gpu_smoke_uses_real_manifests_for_one_step():
     assert config["training"]["select_best_checkpoint_at_end"] is False
 
 
+def test_l4_timing_inherits_real_pilot_training_settings():
+    config = load_config(ROOT / "configs/l4_timing.yaml")
+    assert config["method"]["type"] == "full"
+    assert config["model"]["dtype"] == "bfloat16"
+    assert config["model"]["gradient_checkpointing"] is True
+    assert config["training"]["gradient_accumulation_steps"] == 16
+    assert config["training"]["optim"] == "adamw_torch"
+    assert config["training"]["warmup_steps"] == 0.03
+    assert config["training"]["eval_steps"] == 2500
+    assert config["training"]["save_steps"] == 500
+    assert config["training"]["max_steps"] == 20
+    assert config["training"]["resume_from_checkpoint"] is False
+    assert config["training"]["select_best_checkpoint_at_end"] is False
+    assert config["timing"]["exclude_first_optimizer_steps"] == 1
+
+
 def test_best_selection_requires_evaluation_to_coincide_with_a_save():
     config = load_config(ROOT / "configs/pilot.yaml")
     config["training"]["eval_steps"] = 2400

@@ -1,0 +1,18 @@
+# Twenty optimizer steps using the real pilot's expensive training settings.
+# Evaluation and recovery-save intervals remain identical to pilot.yaml but are
+# intentionally not reached. This run measures steady-state training only and
+# never uploads weights.
+inherits: pilot.yaml
+project:
+  name: paddleocr-vl-1.6-manga-sft-l4-timing
+training:
+  output_dir: checkpoints/l4-timing
+  logging_steps: 1
+  load_best_model_at_end: false
+  select_best_checkpoint_at_end: false
+  max_steps: 20
+  resume_from_checkpoint: false
+timing:
+  enabled: true
+  exclude_first_optimizer_steps: 1
+

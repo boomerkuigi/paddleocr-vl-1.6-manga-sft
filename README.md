@@ -134,7 +134,11 @@ that Hub checkpoint only when `HF_RESUME_FROM_HUB=1` is explicitly set, avoiding
 accidental reuse by a later experiment. Because Transformers requires built-in
 best-model loading to couple save/eval intervals, `train.py` evaluates the final
 weights when needed and reloads the prior best checkpoint if it is better before
-saving `checkpoints/pilot-full/final/`.
+saving the selected model at `checkpoints/pilot-full/`. For fresh-Job resume,
+the rolling private `last-checkpoint` includes optimizer state and a separate
+private `best-checkpoint` retains the model-only weights needed for correct
+best-model selection after an interruption. The destination is verified private
+before Trainer is allowed to upload anything.
 The quantitative rationale is in [`docs/PREFLIGHT_REVIEW.md`](docs/PREFLIGHT_REVIEW.md).
 
 ## Evaluation and disagreement analysis
@@ -242,7 +246,31 @@ hf jobs run \
   python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_job_entrypoint.sh","configs/gpu_smoke.yaml"],check=True)'
 ```
 
-### 3. Three-epoch training
+### 3. Twenty-step L4 timing run
+
+This uses the full pilot's BF16 full-fine-tuning settings, including 16-way
+gradient accumulation, but stops after 20 optimizer steps. It reports phase
+timings, per-optimizer-step CUDA timings (excluding the first startup step from
+the steady-state average), and peak allocated/reserved VRAM. It performs no
+evaluation, recovery save, resume, or Hub upload because the real 2,500/500
+intervals are not reached.
+
+> **WARNING: THIS STARTS BILLABLE GPU COMPUTE.**
+
+```bash
+hf jobs run \
+  --name paddleocr-vl-1-6-manga-l4-timing-20 \
+  --flavor l4x1 \
+  --timeout 3h \
+  --secrets HF_TOKEN \
+  --env PUSH_TO_HUB=0 \
+  --env MANGA109_ROOT=/data/manga109s \
+  --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
+  pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
+  python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_job_entrypoint.sh","configs/l4_timing.yaml"],check=True)'
+```
+
+### 4. Three-epoch training
 
 The training Job prepares the private data, trains, uploads rolling recovery
 checkpoints, selects the best evaluated weights, uploads the final model, and
@@ -266,7 +294,7 @@ hf jobs run \
 The explicit 40-hour ceiling limits the worst case, and Hugging Face releases
 compute when the process reaches a terminal state.
 
-### 4. Held-out benchmark
+### 5. Held-out benchmark
 
 Run this only after verifying the final model exists in the private destination.
 It remounts Manga109-s and rebuilds crops ephemerally because the test data may
@@ -321,7 +349,7 @@ rate. If full fine-tuning OOMs, record peak memory, retry with
 |---|---|
 | Prepared local crops/manifests | `data/prepared/` |
 | Split record | `data/prepared/manifests/split_summary.json` |
-| Checkpoints/final model | `checkpoints/pilot-full/` |
+| Checkpoints and selected final model | `checkpoints/pilot-full/` |
 | Raw baseline predictions | `outputs/predictions/*.jsonl` |
 | Aggregate metrics | `outputs/evaluation/metrics.json` |
 | Flat comparison | `outputs/evaluation/predictions.csv` |
