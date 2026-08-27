@@ -239,7 +239,7 @@ hf jobs run \
   --env MANGA109_ROOT=/data/manga109s \
   --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
   pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
-  bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_job_entrypoint.sh configs/gpu_smoke.yaml'
+  python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_job_entrypoint.sh","configs/gpu_smoke.yaml"],check=True)'
 ```
 
 ### 3. Three-epoch training
@@ -260,7 +260,7 @@ hf jobs run \
   --env MANGA109_ROOT=/data/manga109s \
   --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
   pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
-  bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_job_entrypoint.sh configs/pilot.yaml'
+  python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_job_entrypoint.sh","configs/pilot.yaml"],check=True)'
 ```
 
 The explicit 40-hour ceiling limits the worst case, and Hugging Face releases
@@ -285,7 +285,7 @@ hf jobs run \
   --env MANGA109_ROOT=/data/manga109s \
   --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
   pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
-  bash -lc 'set -euo pipefail; git clone https://github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft.git /workspace/project; cd /workspace/project; bash scripts/hf_benchmark_entrypoint.sh'
+  python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_benchmark_entrypoint.sh"],check=True)'
 ```
 
 ## Runtime and cost estimates
