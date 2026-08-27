@@ -57,6 +57,7 @@ def prepare(root: Path, output: Path, seed: int) -> dict:
     manifest_root = output / "manifests"
     rows: dict[str, list[dict]] = {"train": [], "validation": [], "test": []}
     filtered = Counter()
+    seen_regions: set[tuple[str, str, tuple[int, ...], str]] = set()
 
     for xml_path in xml_files:
         book = xml_path.stem
@@ -74,6 +75,11 @@ def prepare(root: Path, output: Path, seed: int) -> dict:
                 if clipped[2] - clipped[0] < 10 or clipped[3] - clipped[1] < 10:
                     filtered["invalid_after_clipping"] += 1
                     continue
+                region_key = (book, str(page), tuple(clipped), gold)
+                if region_key in seen_regions:
+                    filtered["duplicate_annotation"] += 1
+                    continue
+                seen_regions.add(region_key)
                 sample_id = stable_sample_id(book, page, clipped, gold)
                 crop_path = crop_root / split / book / f"{sample_id}.png"
                 crop_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,11 +133,12 @@ def inspect_source(root: Path, seed: int) -> dict:
     page_paths: dict[tuple[str, str], Path] = {}
     image_sizes: dict[Path, tuple[int, int]] = {}
     crop_checks: set[str] = set()
+    seen_regions: set[tuple[str, str, tuple[int, ...], str]] = set()
 
     for xml_path in xml_files:
         book = xml_path.stem
         split = book_splits[book]
-        for page, bbox, _gold in iter_manga109_regions(xml_path):
+        for page, bbox, gold in iter_manga109_regions(xml_path):
             key = (book, page)
             page_path = page_paths.get(key)
             if page_path is None:
@@ -152,6 +159,11 @@ def inspect_source(root: Path, seed: int) -> dict:
             if clipped[2] - clipped[0] < 10 or clipped[3] - clipped[1] < 10:
                 filtered["invalid_after_clipping"] += 1
                 continue
+            region_key = (book, str(page), tuple(clipped), gold)
+            if region_key in seen_regions:
+                filtered["duplicate_annotation"] += 1
+                continue
+            seen_regions.add(region_key)
             sizes[split] += 1
             if split not in crop_checks:
                 with Image.open(page_path) as source:
