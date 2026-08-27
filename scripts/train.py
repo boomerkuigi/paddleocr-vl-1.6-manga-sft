@@ -227,7 +227,7 @@ def main() -> None:
         adam_beta2=float(training_cfg.get("adam_beta2", 0.999)),
         adam_epsilon=float(training_cfg.get("adam_epsilon", 1e-8)),
         weight_decay=float(training_cfg["weight_decay"]),
-        warmup_ratio=float(training_cfg["warmup_ratio"]),
+        warmup_steps=float(training_cfg["warmup_steps"]),
         lr_scheduler_type=training_cfg["lr_scheduler_type"],
         max_grad_norm=float(training_cfg["max_grad_norm"]),
         bf16=bool(training_cfg["bf16"]),
@@ -253,7 +253,6 @@ def main() -> None:
         hub_model_id=hub_model_id,
         hub_private_repo=bool(hub_cfg.get("private", True)),
         hub_strategy="checkpoint",
-        save_safetensors=True,
     )
     collator = PaddleOCRVLCollator(
         processor=processor,

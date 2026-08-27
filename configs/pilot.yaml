@@ -36,7 +36,8 @@ training:
   adam_beta2: 0.999
   adam_epsilon: 1.0e-8
   weight_decay: 0.01
-  warmup_ratio: 0.03
+  # Transformers 5 accepts ratios below 1.0 through warmup_steps.
+  warmup_steps: 0.03
   lr_scheduler_type: cosine
   max_grad_norm: 1.0
   bf16: true

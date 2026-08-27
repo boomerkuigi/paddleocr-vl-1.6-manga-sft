@@ -13,6 +13,8 @@ def test_pilot_config_loads():
     assert config["model"]["id"] == "PaddlePaddle/PaddleOCR-VL-1.6"
     assert config["model"]["trust_remote_code"] is False
     assert config["training"]["epochs"] == 3
+    assert config["training"]["warmup_steps"] == 0.03
+    assert "warmup_ratio" not in config["training"]
     assert config["training"]["eval_steps"] == 2500
     assert config["training"]["save_steps"] == 500
     assert config["training"]["select_best_checkpoint_at_end"] is True

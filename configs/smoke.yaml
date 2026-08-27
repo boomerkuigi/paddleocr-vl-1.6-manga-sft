@@ -34,7 +34,7 @@ training:
   adam_beta2: 0.999
   adam_epsilon: 1.0e-8
   weight_decay: 0.01
-  warmup_ratio: 0.0
+  warmup_steps: 0.0
   lr_scheduler_type: constant
   max_grad_norm: 1.0
   bf16: true
