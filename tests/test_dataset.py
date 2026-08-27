@@ -117,20 +117,25 @@ def test_end_to_end_crop_preparation(tmp_path: Path):
         page_dir = source / "images" / book
         page_dir.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (80, 60), (index * 70, 20, 30)).save(page_dir / "000.jpg")
+        text = (
+            '<text xmin="5" ymin="5" xmax="60" ymax="45" '
+            f'text="台詞{index}"/>'
+        )
         (source / "annotations" / f"{book}.xml").write_text(
-            '<book><page index="0"><text xmin="5" ymin="5" xmax="60" ymax="45" '
-            f'text="台詞{index}"/></page></book>',
+            f'<book><page index="0">{text}{text}</page></book>',
             encoding="utf-8",
         )
     preflight = inspect_source(source, seed=42)
     assert preflight["status"] == "source_preflight_ok"
     assert preflight["sizes"] == {"train": 1, "validation": 1, "test": 1}
+    assert preflight["filtering"] == {"duplicate_annotation": 3}
     assert preflight["sample_crops_loaded"] == 3
     assert preflight["materialized_crops"] is False
 
     output = tmp_path / "prepared"
     summary = prepare(source, output, seed=42)
     assert summary["sizes"] == {"train": 1, "validation": 1, "test": 1}
+    assert summary["filtering"] == {"duplicate_annotation": 3}
     manifests = {
         split: read_jsonl(output / "manifests" / f"{split}.jsonl", verify_images=True)
         for split in ("train", "validation", "test")
