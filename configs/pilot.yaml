@@ -4,7 +4,9 @@ project:
 model:
   id: PaddlePaddle/PaddleOCR-VL-1.6
   revision: c5630abae1d940eafe0697512a0325494b02ab42
-  trust_remote_code: true
+  # Use Transformers 5's built-in composite config; the model repo's legacy
+  # remote config has no text_config and cannot initialize the built-in model.
+  trust_remote_code: false
   prompt: "OCR:"
   dtype: bfloat16
   attention_implementation: sdpa

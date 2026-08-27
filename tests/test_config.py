@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_pilot_config_loads():
     config = load_config(ROOT / "configs/pilot.yaml")
     assert config["model"]["id"] == "PaddlePaddle/PaddleOCR-VL-1.6"
+    assert config["model"]["trust_remote_code"] is False
     assert config["training"]["epochs"] == 3
     assert config["training"]["eval_steps"] == 2500
     assert config["training"]["save_steps"] == 500

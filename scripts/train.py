@@ -152,7 +152,7 @@ def main() -> None:
     set_seed(int(config["project"]["seed"]))
     common = {
         "revision": model_cfg.get("revision"),
-        "trust_remote_code": model_cfg.get("trust_remote_code", True),
+        "trust_remote_code": model_cfg.get("trust_remote_code", False),
     }
     processor = AutoProcessor.from_pretrained(
         model_cfg["id"],
