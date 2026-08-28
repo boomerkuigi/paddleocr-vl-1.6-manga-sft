@@ -8,6 +8,8 @@ from scripts.create_benchmark_smoke_dataset import (
     create_dataset,
     select_rows,
 )
+from scripts.create_benchmark_smoke_dataset_from_manga109 import create_dataset as create_from_source
+from manga_sft.dataset import deterministic_group_split
 
 
 def test_smoke_selection_is_deterministic_and_order_independent():
@@ -78,3 +80,33 @@ def test_smoke_dataset_job_entrypoint_can_import_the_local_package():
         encoding="utf-8"
     )
     assert 'export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"' in entrypoint
+
+
+def test_source_smoke_builder_crops_only_selected_held_out_samples(tmp_path):
+    root = tmp_path / "Manga109-s"
+    annotations = root / "annotations"
+    images = root / "images"
+    books = ["book-a", "book-b", "book-c"]
+    for index, book in enumerate(books):
+        (images / book).mkdir(parents=True)
+        annotations.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (32, 24), color=(index, 0, 0)).save(images / book / "001.jpg")
+        (annotations / f"{book}.xml").write_text(
+            '<root><page index="1"><text xmin="1" ymin="2" xmax="22" ymax="20" '
+            f'text="gold-{book}" /></page></root>',
+            encoding="utf-8",
+        )
+    test_book = next(
+        book for book, split in deterministic_group_split(books, seed=42).items() if split == "test"
+    )
+    output = tmp_path / "smoke"
+    metadata = create_from_source(
+        root, output, 1, 42, "source/repo", "source-sha", 42
+    )
+    row = json.loads((output / "data" / "smoke.jsonl").read_text(encoding="utf-8"))
+    assert metadata["source_test_samples"] == 1
+    assert metadata["full_crop_archive_materialized"] is False
+    assert row["book"] == test_book
+    assert row["gold"] == f"gold-{test_book}"
+    assert row["original_test_manifest_index"] == 0
+    assert (output / "data" / row["image_path"]).is_file()

@@ -10,9 +10,9 @@ export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python -m pip install --upgrade pip
 python -m pip install Pillow==12.3.0 huggingface-hub==1.28.0
-bash scripts/prepare_manga109s_for_job.sh materialize
-python scripts/create_benchmark_smoke_dataset.py \
-  --manifest data/prepared/manifests/test.jsonl \
+bash scripts/prepare_manga109s_for_job.sh extract
+python scripts/create_benchmark_smoke_dataset_from_manga109.py \
+  --manga109-root /workspace/data/manga109s-extracted \
   --output outputs/private-smoke-dataset \
   --count 100 \
   --selection-seed 42 \

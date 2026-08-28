@@ -5,8 +5,8 @@ MODE="${1:-materialize}"
 : "${MANGA109_ROOT:=/data/manga109s}"
 : "${MANGA109_ARCHIVE_CACHE:=/workspace/data/manga109s-archive-cache}"
 
-if [[ "${MODE}" != "materialize" && "${MODE}" != "preflight" ]]; then
-  echo "Usage: $0 [materialize|preflight]" >&2
+if [[ "${MODE}" != "materialize" && "${MODE}" != "preflight" && "${MODE}" != "extract" ]]; then
+  echo "Usage: $0 [materialize|preflight|extract]" >&2
   exit 2
 fi
 
@@ -34,7 +34,7 @@ if [[ "${MODE}" == "preflight" ]]; then
     --output data/prepared \
     --seed 42 \
     --preflight-only
-elif [[ ! -f data/prepared/manifests/train.jsonl ]]; then
+elif [[ "${MODE}" == "materialize" && ! -f data/prepared/manifests/train.jsonl ]]; then
   python scripts/prepare_dataset.py \
     --manga109-root "${SOURCE_ROOT}" \
     --output data/prepared \
