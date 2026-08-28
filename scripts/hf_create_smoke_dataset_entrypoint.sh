@@ -6,6 +6,8 @@ set -euo pipefail
 : "${MANGA109_SOURCE_REVISION:?MANGA109_SOURCE_REVISION must pin the gated source dataset}"
 : "${MANGA109_ROOT:=/data/manga109s}"
 
+export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
+
 python -m pip install --upgrade pip
 python -m pip install Pillow==12.3.0 huggingface-hub==1.28.0
 bash scripts/prepare_manga109s_for_job.sh materialize

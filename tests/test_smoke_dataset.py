@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from PIL import Image
 
@@ -70,3 +71,10 @@ def test_private_smoke_dataset_preserves_identity_and_provenance(tmp_path):
         assert row["source_dataset_revision"] == "source-sha"
         assert row["smoke_selection_method"] == SELECTION_METHOD
         assert (output / "data" / row["image_path"]).is_file()
+
+
+def test_smoke_dataset_job_entrypoint_can_import_the_local_package():
+    entrypoint = Path("scripts/hf_create_smoke_dataset_entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"' in entrypoint
