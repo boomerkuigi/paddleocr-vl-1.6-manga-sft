@@ -162,7 +162,8 @@ python scripts/evaluate_baselines.py --manifest "$MANIFEST" --model paddle_manga
 python scripts/evaluate_baselines.py --manifest "$MANIFEST" --model paddle_1_6 \
   --output outputs/predictions/paddle_1_6.jsonl
 python scripts/evaluate_baselines.py --manifest "$MANIFEST" --model new_model \
-  --model-id checkpoints/pilot-full/final \
+  --model-id <HF_USER>/PaddleOCR-VL-1.6-For-Manga \
+  --revision <MODEL_COMMIT> \
   --output outputs/predictions/new_model.jsonl
 
 python scripts/evaluate.py outputs/predictions/*.jsonl \
@@ -310,10 +311,12 @@ hf jobs run \
   --timeout 12h \
   --secrets HF_TOKEN \
   --env HF_MODEL_REPO=<HF_USER>/PaddleOCR-VL-1.6-For-Manga \
+  --env HF_MODEL_REVISION=<MODEL_COMMIT> \
+  --env HF_MODEL_SHA256=<ROOT_MODEL_SHA256> \
   --env MANGA109_ROOT=/data/manga109s \
   --volume hf://datasets/hal-utokyo/Manga109-s:/data/manga109s:ro \
   pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel \
-  python -c 'import io,os,subprocess,urllib.request,zipfile; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/refs/heads/main").read())); z.extractall("/workspace"); os.rename("/workspace/paddleocr-vl-1.6-manga-sft-main","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_benchmark_entrypoint.sh"],check=True)'
+  python -c 'import io,os,subprocess,urllib.request,zipfile; c="<CODE_COMMIT>"; z=zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(f"https://codeload.github.com/boomerkuigi/paddleocr-vl-1.6-manga-sft/zip/{c}").read())); z.extractall("/workspace"); os.rename(f"/workspace/paddleocr-vl-1.6-manga-sft-{c}","/workspace/project"); os.chdir("/workspace/project"); subprocess.run(["bash","scripts/hf_benchmark_entrypoint.sh"],check=True)'
 ```
 
 ## Runtime and cost estimates

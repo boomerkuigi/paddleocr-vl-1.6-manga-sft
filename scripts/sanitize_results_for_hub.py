@@ -23,7 +23,13 @@ def sanitize(prediction_dir: Path, evaluation_dir: Path, output: Path) -> dict:
                     item = json.loads(line)
                     safe = {
                         key: item[key]
-                        for key in ("sample_id", "model_alias", "model_id", "prediction")
+                        for key in (
+                            "sample_id",
+                            "model_alias",
+                            "model_id",
+                            "model_revision",
+                            "prediction",
+                        )
                         if key in item
                     }
                     writer.write(json.dumps(safe, ensure_ascii=False, sort_keys=True) + "\n")
@@ -66,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
