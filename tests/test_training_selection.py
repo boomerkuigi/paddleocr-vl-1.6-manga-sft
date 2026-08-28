@@ -8,8 +8,28 @@ from scripts.train import (
     auto_checkpoint,
     ensure_private_hub_repo,
     hub_checkpoint,
+    load_best_checkpoint_weights,
     select_best_checkpoint,
 )
+
+
+class DummyModel:
+    config = SimpleNamespace()
+
+    def __init__(self, state=None):
+        self.state = state or {"model.weight": "final", "lm_head.weight": "final"}
+        self.strict = None
+
+    def parameters(self):
+        yield SimpleNamespace(dtype="bfloat16")
+
+    def state_dict(self):
+        return dict(self.state)
+
+    def load_state_dict(self, state, strict=False):
+        self.strict = strict
+        self.state = dict(state)
+        return SimpleNamespace(missing_keys=[], unexpected_keys=[])
 
 
 class DummyTrainer:
@@ -23,6 +43,7 @@ class DummyTrainer:
         )
         self.final_metric = final_metric
         self.loaded = False
+        self.model = DummyModel()
 
     def _load_best_model(self):
         self.loaded = True
@@ -31,13 +52,59 @@ class DummyTrainer:
         return {"eval_loss": self.final_metric}
 
 
-def test_explicit_best_checkpoint_selection_loads_evaluated_save():
+def test_explicit_best_checkpoint_selection_loads_evaluated_save(monkeypatch):
     trainer = DummyTrainer("checkpoint-2500")
+    selected_checkpoint = []
+    monkeypatch.setattr(
+        "scripts.train.load_best_checkpoint_weights",
+        lambda current_trainer, checkpoint: selected_checkpoint.append((current_trainer, checkpoint)),
+    )
     selected = select_best_checkpoint(
         trainer, {"select_best_checkpoint_at_end": True}
     )
     assert selected == "checkpoint-2500"
-    assert trainer.loaded is True
+    assert selected_checkpoint == [(trainer, "checkpoint-2500")]
+    assert trainer.loaded is False
+
+
+def test_conversion_aware_best_checkpoint_reload_is_exact_and_strict():
+    trainer = DummyTrainer("checkpoint-2500")
+    restored = DummyModel({"model.weight": "best", "lm_head.weight": "best"})
+    loader_calls = []
+
+    def loader(checkpoint, **kwargs):
+        loader_calls.append((checkpoint, kwargs))
+        return restored
+
+    load_best_checkpoint_weights(trainer, "checkpoint-2500", model_loader=loader)
+
+    assert loader_calls == [
+        (
+            "checkpoint-2500",
+            {
+                "config": trainer.model.config,
+                "local_files_only": True,
+                "dtype": "bfloat16",
+            },
+        )
+    ]
+    assert trainer.model.state == {"model.weight": "best", "lm_head.weight": "best"}
+    assert trainer.model.strict is True
+
+
+def test_conversion_aware_reload_rejects_key_mismatch_before_partial_load():
+    trainer = DummyTrainer("checkpoint-2500")
+    restored = DummyModel({"model.weight": "best", "unexpected.weight": "best"})
+
+    with pytest.raises(RuntimeError, match="non-exact state dict"):
+        load_best_checkpoint_weights(
+            trainer,
+            "checkpoint-2500",
+            model_loader=lambda *args, **kwargs: restored,
+        )
+
+    assert trainer.model.state == {"model.weight": "final", "lm_head.weight": "final"}
+    assert trainer.model.strict is None
 
 
 def test_unscheduled_final_evaluation_can_select_current_weights():

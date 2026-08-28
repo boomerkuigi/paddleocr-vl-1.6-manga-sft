@@ -84,6 +84,52 @@ def ensure_private_hub_repo(model_id: str, token: str | None, api=None):
     return api
 
 
+def load_best_checkpoint_weights(trainer, checkpoint: str, model_loader=None) -> None:
+    """Load a full-model checkpoint through Transformers' conversion-aware path.
+
+    Transformers 5 saves some architectures, including PaddleOCR-VL, with their
+    registered checkpoint conversion mapping reversed. Trainer._load_best_model
+    bypasses that mapping for an unsharded safetensors file and calls
+    load_state_dict directly, which can silently load only overlapping keys.
+    Reconstructing a temporary model with from_pretrained reapplies the mapping;
+    an exact key-set check then prevents any partial update of the trained model.
+    """
+    model = trainer.model
+    if model_loader is None:
+        model_loader = model.__class__.from_pretrained
+
+    try:
+        dtype = next(model.parameters()).dtype
+    except StopIteration:
+        dtype = None
+
+    loader_kwargs = {
+        "config": model.config,
+        "local_files_only": True,
+    }
+    if dtype is not None:
+        loader_kwargs["dtype"] = dtype
+    restored = model_loader(str(checkpoint), **loader_kwargs)
+    restored_state = restored.state_dict()
+    expected_keys = set(model.state_dict())
+    restored_keys = set(restored_state)
+    if expected_keys != restored_keys:
+        missing = sorted(expected_keys - restored_keys)
+        unexpected = sorted(restored_keys - expected_keys)
+        raise RuntimeError(
+            "Conversion-aware best-checkpoint reload produced a non-exact state dict; "
+            f"missing={missing[:10]}, unexpected={unexpected[:10]}"
+        )
+    load_result = model.load_state_dict(restored_state, strict=True)
+    missing = list(getattr(load_result, "missing_keys", []))
+    unexpected = list(getattr(load_result, "unexpected_keys", []))
+    if missing or unexpected:
+        raise RuntimeError(
+            "Strict best-checkpoint reload was incomplete; "
+            f"missing={missing[:10]}, unexpected={unexpected[:10]}"
+        )
+
+
 def select_best_checkpoint(trainer, training_cfg: dict) -> str | None:
     """Load the best evaluated save while allowing more frequent recovery saves."""
     if not training_cfg.get("select_best_checkpoint_at_end", False):
@@ -118,9 +164,13 @@ def select_best_checkpoint(trainer, training_cfg: dict) -> str | None:
         )
     # Transformers 5.16 requires save_steps to be a multiple of eval_steps when
     # load_best_model_at_end is enabled, which prevents saves every 500 with
-    # evaluations every 2500. The pinned Trainer's loader correctly handles both
-    # full and PEFT checkpoints, so invoke it explicitly after training.
-    trainer._load_best_model()
+    # evaluations every 2500. For a full model, reload through from_pretrained so
+    # architecture-specific checkpoint key conversions are applied. PEFT keeps
+    # using Trainer's adapter-aware loader.
+    if hasattr(trainer.model, "peft_config"):
+        trainer._load_best_model()
+    else:
+        load_best_checkpoint_weights(trainer, checkpoint)
     return str(checkpoint)
 
 
