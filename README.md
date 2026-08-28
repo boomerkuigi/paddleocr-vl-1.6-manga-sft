@@ -184,6 +184,22 @@ Outputs include raw per-model JSONL, `predictions.csv`, `metrics.json`,
 both correct/both wrong, either older model uniquely correct, new-model wins over
 both, and pairwise regressions between the old/new Paddle manga models.
 
+### Private 100-sample benchmark smoke
+
+Before a full held-out benchmark, use the dedicated four-model smoke workflow.
+It creates a deterministic 100-sample subset from the existing seed-42 held-out
+split, then runs real GPU loading, processor loading, decoding, and metrics for
+Manga-OCR, the older Paddle manga checkpoint, official PaddleOCR-VL 1.6, and the
+promoted model. The subset records sample identity, source book/page metadata,
+gold text, split identity, source dataset revision, and selection seed/method.
+
+Because it contains Manga109-s derivative crops and transcriptions, create its
+Hugging Face dataset repository only when the authorized dataset user has
+explicitly requested private remote storage. Keep it private, do not add
+collaborators, and do not share or publish it. The smoke Job downloads that
+private subset directly and does not mount or materialize the full Manga109-s
+archive.
+
 ## Linguistik hard cases
 
 The schema is ready under [`data/linguistik_hard_cases/`](data/linguistik_hard_cases/README.md).

@@ -15,12 +15,20 @@ public release because repository cards and dataset terms can change.
 The official Manga109-s terms also permit machine-learning/image-processing
 experiments and commercial use of results, subject to their conditions. Direct
 or modified manga images cannot be sold as products, and publication of whole
-pages is limited by the terms. This project takes the stricter operational
-position: no Manga109-s image or derived crop leaves the user's private runtime.
+pages is limited by the terms. This project normally keeps Manga109-s images and
+derived crops in the user's private runtime. A benchmark smoke subset may instead
+be stored in a private Hugging Face dataset repository owned by the original
+authorized user when that user explicitly directs it. This is operational storage
+for that same user, not permission to redistribute the data; whether it is
+permitted by the upstream terms remains the user's responsibility to confirm with
+the licensor.
 
 Therefore:
 
-- no Hugging Face dataset repository is created for Manga109-s derivatives;
+- no public Hugging Face dataset repository is created for Manga109-s derivatives;
+- a private smoke repository, if explicitly requested, must remain private,
+  have no collaborators, contain only the minimum benchmark subset, and never
+  be shared, cloned, or made public;
 - Git ignores all local raw/prepared data;
 - a Hugging Face Job mounts the official gated dataset read-only;
 - reports containing crop thumbnails remain local/ignored;
@@ -32,4 +40,3 @@ Therefore:
 Current Manga109-s is the v2026 release (87 books). A user holding the v2023
 layout may also prepare it locally, but dataset version must be recorded because
 split sizes and comparability differ.
-

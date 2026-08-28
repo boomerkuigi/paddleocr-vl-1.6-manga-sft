@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from manga_sft.dataset import read_jsonl
-from manga_sft.inference import MODEL_IDS, MangaOCRAdapter, PaddleOCRVLAdapter
+from manga_sft.inference import MODEL_IDS, MODEL_REVISIONS, MangaOCRAdapter, PaddleOCRVLAdapter
 from manga_sft.metrics import aggregate_metrics
 from manga_sft.reporting import write_prediction_jsonl
 
@@ -33,13 +33,13 @@ def main() -> None:
     model_id = args.model_id or MODEL_IDS.get(args.model) or os.environ.get("HF_MODEL_REPO")
     if not model_id:
         raise ValueError("--model-id or HF_MODEL_REPO is required for new_model")
-    revision = args.revision or (
+    revision = args.revision or MODEL_REVISIONS.get(args.model) or (
         os.environ.get("HF_MODEL_REVISION") if args.model == "new_model" else None
     )
     if args.model == "new_model" and not revision:
         raise ValueError("--revision or HF_MODEL_REVISION is required for new_model")
     adapter = (
-        MangaOCRAdapter(model_id, args.device)
+        MangaOCRAdapter(model_id, args.device, revision=revision)
         if args.model == "manga_ocr"
         else PaddleOCRVLAdapter(model_id=model_id, device=args.device, revision=revision)
     )
