@@ -1,8 +1,24 @@
 # PaddleOCR-VL 1.6 manga SFT
 
-Reproducible preparation, fine-tuning, and comparative evaluation for a future
+Reproducible preparation, fine-tuning, and comparative evaluation for
 `PaddleOCR-VL-1.6-For-Manga`. This is a text-region OCR project, not a full-page
 detector or a Linguistik integration.
+
+## Frozen model status
+
+The production/promoted model is V1:
+
+- Repository: `AlphaBeta07/PaddleOCR-VL-1.6-For-Manga`
+- Immutable promoted revision: `103c97c277d688b31b8adb1bb2228380b77a640b`
+- Root `model.safetensors` SHA256: `f8f49e6c2f82f5e97db7da33d1ad606e7503242fc760d6dc84302ec669a7881a`
+- Held-out result: 6,883 exact, micro CER `0.090278`, macro CER `0.122686`
+
+V1 remains the frozen Linguistik production champion. The V2 continuation is
+preserved separately for reproducibility only; it did not meet promotion
+criteria. Its main regression was punctuation/form drift from the targeted
+continuation mixture, especially ellipsis, dot, and repeated-mark variants.
+No future V3 continuation should start from V2. Any future continuation must
+restart from the immutable V1 revision above.
 
 ## Why
 
