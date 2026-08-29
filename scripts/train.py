@@ -18,6 +18,25 @@ from manga_sft.mixture import DeterministicMixtureSampler, build_mixture_plan
 from manga_sft.validation import run_validation_diagnostics
 
 
+class MixtureTrainerMixin:
+    """Add the fixed, provenance-preserving sampler to a Transformers Trainer."""
+
+    def __init__(self, *args, mixture_sampler=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mixture_sampler = mixture_sampler
+
+    def _get_train_sampler(self, train_dataset=None):
+        """Use the mixture sampler with the Transformers 5.x callback contract."""
+        if self.mixture_sampler is not None:
+            return self.mixture_sampler
+        return super()._get_train_sampler(train_dataset)
+
+
+def make_mixture_trainer_class(trainer_base):
+    """Build the production Trainer subclass without importing Transformers at module import time."""
+    return type("MixtureTrainer", (MixtureTrainerMixin, trainer_base), {})
+
+
 def auto_checkpoint(output_dir: Path) -> str | None:
     checkpoints = []
     if output_dir.is_dir():
@@ -508,13 +527,7 @@ def main() -> None:
                 control.should_save = True
             return control
 
-    class MixtureTrainer(Trainer):
-        def __init__(self, *args, mixture_sampler=None, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.mixture_sampler = mixture_sampler
-
-        def _get_train_sampler(self):
-            return self.mixture_sampler or super()._get_train_sampler()
+    MixtureTrainer = make_mixture_trainer_class(Trainer)
 
     callbacks = []
     timing_cfg = config.get("timing", {})
