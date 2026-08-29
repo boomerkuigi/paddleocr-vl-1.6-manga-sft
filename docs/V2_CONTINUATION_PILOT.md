@@ -1,4 +1,20 @@
-# V2 continuation-pilot data contract
+# V2 continuation pilot — archived failed experiment
+
+> Status: **not promoted; retained for reproducibility only.** V1 remains the
+> frozen Linguistik production champion. Do not start V3 from V2; any future
+> continuation must restart from immutable V1 revision
+> `103c97c277d688b31b8adb1bb2228380b77a640b`.
+
+V1 production repository: `AlphaBeta07/PaddleOCR-VL-1.6-For-Manga`
+
+V1 held-out result: **6,883 exact**, micro CER `0.090278`, macro CER `0.122686`.
+
+V2 held-out result: **6,790 exact**, micro CER `0.093128`, macro CER
+`0.128886`. The V2 regression was mainly punctuation/form drift from the
+targeted continuation mixture, especially ellipsis, dot, and repeated-mark
+variants. The V2 model repository and all checkpoints/results remain preserved
+as an immutable experiment record.
+
 
 `configs/v2_continuation_pilot.yaml` starts from the immutable promoted V1
 revision `103c97c277d688b31b8adb1bb2228380b77a640b`.  It is a full-BF16,
