@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ REQUIRED_PATHS = (
     "data.manifest_dir",
     "training.output_dir",
 )
+ENVIRONMENT_VARIABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +100,15 @@ def validate_config(config: dict[str, Any]) -> None:
         steps = [int(value) for value in diagnostics.get("steps", [])]
         if not steps or any(step <= 0 for step in steps):
             raise ValueError("validation_diagnostics.steps must contain positive optimizer steps")
+    hub_model_id_env(config.get("hub", {}))
+
+
+def hub_model_id_env(hub_config: dict[str, Any]) -> str:
+    """Return the only environment variable allowed to name a Hub destination."""
+    value = hub_config.get("model_id_env", "HF_MODEL_REPO")
+    if not isinstance(value, str) or not ENVIRONMENT_VARIABLE_NAME.fullmatch(value):
+        raise ValueError("hub.model_id_env must be a valid environment variable name")
+    return value
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

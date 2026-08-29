@@ -6,9 +6,7 @@ CONFIG_PATH="${1:-configs/pilot.yaml}"
 : "${MANGA109_ROOT:=/data/manga109s}"
 : "${PUSH_TO_HUB:=1}"
 
-if [[ "${PUSH_TO_HUB}" == "1" ]]; then
-  : "${HF_MODEL_REPO:?HF_MODEL_REPO must name the private destination model repository}"
-elif [[ "${PUSH_TO_HUB}" != "0" ]]; then
+if [[ "${PUSH_TO_HUB}" != "0" && "${PUSH_TO_HUB}" != "1" ]]; then
   echo "PUSH_TO_HUB must be 0 or 1" >&2
   exit 2
 fi
@@ -31,6 +29,22 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 phase_finished_ns="$(date +%s%N)"
 record_phase dependency_install "${phase_started_ns}" "${phase_finished_ns}"
+
+# The config, rather than a hard-coded legacy name, owns the Hub destination.
+# Resolve only after requirements are installed because load_config requires
+# PyYAML. hub_model_id_env validates the name for Bash indirect expansion.
+HUB_MODEL_ID_ENV="$(PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}" python - "${CONFIG_PATH}" <<'PY'
+import sys
+
+from manga_sft.config import hub_model_id_env, load_config
+
+print(hub_model_id_env(load_config(sys.argv[1]).get("hub", {})))
+PY
+)"
+if [[ "${PUSH_TO_HUB}" == "1" && -z "${!HUB_MODEL_ID_ENV:-}" ]]; then
+  echo "${HUB_MODEL_ID_ENV} must name the private destination model repository" >&2
+  exit 2
+fi
 
 phase_started_ns="$(date +%s%N)"
 bash scripts/prepare_manga109s_for_job.sh materialize

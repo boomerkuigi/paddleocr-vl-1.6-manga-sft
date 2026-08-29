@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from manga_sft.config import load_config, validate_config
+from manga_sft.config import hub_model_id_env, load_config, validate_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,3 +71,4 @@ def test_v2_continuation_pilot_is_read_only_and_test_excluding():
     assert config["training"]["save_steps"] == 500
     assert config["training"]["additional_save_steps"] == [1250]
     assert config["hub"]["push_to_hub"] is False
+    assert hub_model_id_env(config["hub"]) == "HF_V2_PILOT_REPO"

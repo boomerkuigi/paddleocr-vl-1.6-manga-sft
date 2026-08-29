@@ -6,6 +6,7 @@ import pytest
 
 from scripts.train import (
     auto_checkpoint,
+    configured_hub_model_id,
     ensure_private_hub_repo,
     hub_checkpoint,
     load_best_checkpoint_weights,
@@ -155,6 +156,16 @@ def test_private_hub_destination_is_verified():
 def test_public_hub_destination_is_rejected():
     with pytest.raises(RuntimeError, match="is not private"):
         ensure_private_hub_repo("owner/model", "secret", api=DummyHubApi(private=False))
+
+
+def test_configured_hub_destination_does_not_fall_back_to_v1_env():
+    hub = {"model_id_env": "HF_V2_PILOT_REPO"}
+    environment = {
+        "HF_MODEL_REPO": "AlphaBeta07/PaddleOCR-VL-1.6-For-Manga",
+        "HF_V2_PILOT_REPO": "AlphaBeta07/PaddleOCR-VL-1.6-For-Manga-V2-Pilot",
+    }
+    assert configured_hub_model_id(hub, environment) == environment["HF_V2_PILOT_REPO"]
+    assert configured_hub_model_id(hub, {"HF_MODEL_REPO": environment["HF_MODEL_REPO"]}) is None
 
 
 def test_hub_resume_repoints_older_best_checkpoint(tmp_path, monkeypatch):

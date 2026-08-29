@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from manga_sft.collator import PaddleOCRVLCollator
-from manga_sft.config import load_config, resolve_project_path
+from manga_sft.config import hub_model_id_env, load_config, resolve_project_path
 from manga_sft.dataset import ManifestDataset, read_jsonl, validate_no_leakage
 from manga_sft.inference import load_paddleocr_vl_processor, normalize_paddleocr_vl_config
 from manga_sft.mixture import DeterministicMixtureSampler, build_mixture_plan
@@ -85,6 +85,13 @@ def ensure_private_hub_repo(model_id: str, token: str | None, api=None):
     if not bool(getattr(info, "private", False)):
         raise RuntimeError(f"Refusing to upload training artifacts because {model_id} is not private")
     return api
+
+
+def configured_hub_model_id(hub_config: dict, environ: dict | None = None) -> str | None:
+    """Resolve the configured destination without falling back to another repo."""
+    if environ is None:
+        environ = os.environ
+    return environ.get(hub_model_id_env(hub_config))
 
 
 def load_best_checkpoint_weights(trainer, checkpoint: str, model_loader=None) -> None:
@@ -335,10 +342,10 @@ def main() -> None:
         model.print_trainable_parameters()
 
     hub_cfg = config.get("hub", {})
-    hub_model_id = os.environ.get(hub_cfg.get("model_id_env", "HF_MODEL_REPO"))
+    hub_model_id = configured_hub_model_id(hub_cfg)
     push_to_hub = bool(args.push_to_hub or hub_cfg.get("push_to_hub", False))
     if push_to_hub and not hub_model_id:
-        raise ValueError("HF_MODEL_REPO must be set when pushing to the Hub")
+        raise ValueError(f"{hub_model_id_env(hub_cfg)} must be set when pushing to the Hub")
     hub_api = None
     if push_to_hub:
         if not bool(hub_cfg.get("private", True)):
