@@ -15,7 +15,9 @@ by a salted SHA-256 of seed, label, and `sample_id`, and skips a row already
 chosen for another added slot.  A selected row consequently appears exactly
 twice in an epoch (once ordinary, once targeted), never once per tag.  The
 final index order is also seeded and fixed, which makes a checkpoint restart
-replayable.
+replayable.  Each sampler token also retains whether its occurrence is ordinary
+or which added quota produced it; the Dataset removes that token before model
+collation, while the run can report exact partial-pilot exposure counts.
 
 The pilot opens only `train.jsonl` and `validation.jsonl`.  The held-out
 11,063-sample manifest is deliberately not read by its runtime.  CPU preflight

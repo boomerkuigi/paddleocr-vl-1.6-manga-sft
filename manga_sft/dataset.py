@@ -227,5 +227,7 @@ class ManifestDataset:
     def __len__(self) -> int:
         return len(self.rows)
 
-    def __getitem__(self, index: int) -> dict:
+    def __getitem__(self, index: int | tuple[int, str]) -> dict:
+        if isinstance(index, tuple):
+            index = index[0]
         return self.rows[index]

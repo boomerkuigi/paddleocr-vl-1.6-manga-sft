@@ -47,11 +47,12 @@ def test_mixture_is_deterministic_with_exact_quotas_and_no_target_duplication():
     }
     assert Counter(first.selected_groups) == Counter(first.target_counts)
     assert len(set(first.selected_indices)) == 100
-    counts = Counter(DeterministicMixtureSampler(first))
+    counts = Counter(index for index, _ in DeterministicMixtureSampler(first))
     assert len(counts) == len(rows)
     assert set(counts.values()) <= {1, 2}
     assert sum(count == 2 for count in counts.values()) == 100
-    assert len(first.sampler_indices) == len(rows) + 100
+    assert len(first.sampler_entries) == len(rows) + 100
+    assert Counter(group for _, group in first.sampler_entries)["ordinary"] == len(rows)
 
 
 def test_mixture_rejects_duplicate_train_ids():

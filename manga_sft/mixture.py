@@ -138,7 +138,7 @@ class MixturePlan:
     target_counts: dict[str, int]
     selected_indices: tuple[int, ...]
     selected_groups: tuple[str, ...]
-    sampler_indices: tuple[int, ...]
+    sampler_entries: tuple[tuple[int, str], ...]
 
     @property
     def total_draws(self) -> int:
@@ -214,8 +214,10 @@ def build_mixture_plan(
 
     # The final permutation is fixed from the seed.  Restarting from a Trainer
     # checkpoint therefore replays the same stream and its skipped batches.
-    sampler_indices = list(range(len(rows))) + selected_indices
-    random.Random(seed).shuffle(sampler_indices)
+    sampler_entries = [(index, "ordinary") for index in range(len(rows))] + list(
+        zip(selected_indices, selected_groups, strict=True)
+    )
+    random.Random(seed).shuffle(sampler_entries)
     return MixturePlan(
         seed=seed,
         base_count=len(rows),
@@ -223,7 +225,7 @@ def build_mixture_plan(
         target_counts=dict(quotas),
         selected_indices=tuple(selected_indices),
         selected_groups=tuple(selected_groups),
-        sampler_indices=tuple(sampler_indices),
+        sampler_entries=tuple(sampler_entries),
     )
 
 
@@ -233,11 +235,14 @@ class DeterministicMixtureSampler:
     def __init__(self, plan: MixturePlan):
         self.plan = plan
 
-    def __iter__(self) -> Iterable[int]:
-        return iter(self.plan.sampler_indices)
+    def __iter__(self) -> Iterable[tuple[int, str]]:
+        # The Dataset discards the provenance token before collating.  Keeping
+        # it in the sampler is what makes partial-pilot exposure accounting
+        # exact rather than inferring category membership from a duplicated ID.
+        return iter(self.plan.sampler_entries)
 
     def __len__(self) -> int:
-        return len(self.plan.sampler_indices)
+        return len(self.plan.sampler_entries)
 
     def set_epoch(self, epoch: int) -> None:
         # Trainer/Accelerate may call this method.  This pilot deliberately has
