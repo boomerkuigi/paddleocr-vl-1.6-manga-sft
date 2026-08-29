@@ -67,10 +67,37 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         eval_steps = int(training.get("eval_steps", 0))
         save_steps = int(training.get("save_steps", 0))
-        if eval_steps <= 0 or save_steps <= 0 or eval_steps % save_steps:
+        additional_save_steps = {int(value) for value in training.get("additional_save_steps", [])}
+        if (
+            eval_steps <= 0
+            or save_steps <= 0
+            or (eval_steps % save_steps and eval_steps not in additional_save_steps)
+        ):
             raise ValueError(
-                "eval_steps must be a positive multiple of save_steps so every evaluation has a checkpoint"
+                "eval_steps must be a positive multiple of save_steps or listed in additional_save_steps"
             )
+    mixture = config.get("data", {}).get("targeted_mixture")
+    if mixture is not None:
+        if not bool(config["data"].get("forbid_test_access", False)):
+            raise ValueError("targeted pilot mixtures must set data.forbid_test_access: true")
+        if int(mixture.get("extra_draws", 0)) <= 0:
+            raise ValueError("data.targeted_mixture.extra_draws must be positive")
+        weights = mixture.get("target_weights", {})
+        expected_groups = {
+            "repeated_or_long_mark",
+            "likely_sfx",
+            "punctuation_form",
+            "visual_or_unusual_unicode",
+        }
+        if set(weights) != expected_groups or abs(sum(float(value) for value in weights.values()) - 1.0) > 1e-9:
+            raise ValueError("targeted_mixture.target_weights must name the four V2 groups and sum to 1")
+    diagnostics = config.get("validation_diagnostics", {})
+    if diagnostics.get("enabled", False):
+        if training.get("eval_strategy") != "steps":
+            raise ValueError("validation diagnostics require step-based evaluation")
+        steps = [int(value) for value in diagnostics.get("steps", [])]
+        if not steps or any(step <= 0 for step in steps):
+            raise ValueError("validation_diagnostics.steps must contain positive optimizer steps")
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

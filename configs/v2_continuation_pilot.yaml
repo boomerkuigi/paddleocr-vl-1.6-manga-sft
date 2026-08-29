@@ -1,0 +1,66 @@
+# Read-only continuation from the verified promoted V1 root model.  This job
+# never touches the 11,063-sample held-out benchmark or uploads to its source.
+inherits: pilot.yaml
+project:
+  name: paddleocr-vl-1-6-manga-v2-continuation-pilot
+  seed: 42
+model:
+  id: AlphaBeta07/PaddleOCR-VL-1.6-For-Manga
+  revision: 103c97c277d688b31b8adb1bb2228380b77a640b
+  trust_remote_code: false
+method:
+  type: full
+data:
+  # The current de-duplicated real-data train manifest has exactly 99,128 rows.
+  manifest_dir: data/prepared/manifests
+  train: train.jsonl
+  validation: validation.jsonl
+  # The pilot runtime never opens this manifest.  The immutable count is
+  # provenance so reports can state what was deliberately excluded.
+  test: test.jsonl
+  immutable_test_samples: 11063
+  forbid_test_access: true
+  targeted_mixture:
+    # One mixture epoch = every ordinary train row once + these 25,000 draws.
+    # Categories are quota sources, not independent oversamplers: each chosen
+    # sample receives at most one additional exposure even if it has many tags.
+    extra_draws: 25000
+    target_weights:
+      repeated_or_long_mark: 0.40
+      likely_sfx: 0.25
+      punctuation_form: 0.20
+      visual_or_unusual_unicode: 0.15
+training:
+  output_dir: checkpoints/v2-continuation-pilot-2500
+  epochs: 1
+  # Keep V1's effective global batch: 1 crop/device x 16 accumulation.
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  # Midpoint of the audited 2e-6--3e-6 continuation range: cautious enough
+  # for V1 retention while large enough to measure targeted adaptation.
+  learning_rate: 2.5e-6
+  max_steps: 2500
+  eval_strategy: steps
+  eval_steps: 1250
+  save_strategy: steps
+  save_steps: 500
+  # A forced recovery save exactly aligns the first required evaluation.
+  additional_save_steps: [1250]
+  save_total_limit: 4
+  logging_steps: 10
+  load_best_model_at_end: false
+  select_best_checkpoint_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  resume_from_checkpoint: auto
+hub:
+  # The V1 source is read-only.  No pilot artifact is pushed unless a later,
+  # separately approved config explicitly enables a private destination.
+  push_to_hub: false
+  private: true
+  model_id_env: HF_V2_PILOT_REPO
+validation_diagnostics:
+  enabled: true
+  # At each point generate once over the ordinary, unweighted validation split.
+  # Targeted groups are overlapping views of those same predictions.
+  steps: [1250, 2500]

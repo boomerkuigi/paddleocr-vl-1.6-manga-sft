@@ -13,6 +13,9 @@ import yaml
 from manga_sft.collator import PaddleOCRVLCollator
 from manga_sft.config import load_config, resolve_project_path
 from manga_sft.dataset import ManifestDataset, read_jsonl, validate_no_leakage
+from manga_sft.inference import load_paddleocr_vl_processor, normalize_paddleocr_vl_config
+from manga_sft.mixture import DeterministicMixtureSampler, build_mixture_plan
+from manga_sft.validation import run_validation_diagnostics
 
 
 def auto_checkpoint(output_dir: Path) -> str | None:
@@ -221,19 +224,38 @@ def main() -> None:
     validation_rows = read_jsonl(
         manifest_dir / config["data"]["validation"], config["data"].get("verify_images", True)
     )
-    test_rows = read_jsonl(
-        manifest_dir / config["data"]["test"], config["data"].get("verify_images", True)
-    )
-    validate_no_leakage({"train": train_rows, "validation": validation_rows, "test": test_rows})
+    forbid_test_access = bool(config["data"].get("forbid_test_access", False))
+    if forbid_test_access:
+        # A pilot must not materialize, inspect, or select from the held-out
+        # benchmark.  The immutable count is configuration provenance only.
+        test_rows: list[dict] = []
+        validate_no_leakage({"train": train_rows, "validation": validation_rows})
+        test_count = int(config["data"].get("immutable_test_samples", 0))
+    else:
+        test_rows = read_jsonl(
+            manifest_dir / config["data"]["test"], config["data"].get("verify_images", True)
+        )
+        validate_no_leakage({"train": train_rows, "validation": validation_rows, "test": test_rows})
+        test_count = len(test_rows)
     if not train_rows or not validation_rows:
         raise ValueError("Train and validation manifests must both be non-empty")
     manifest_validation_seconds = time.perf_counter() - manifests_started
+    mixture_cfg = config["data"].get("targeted_mixture")
+    mixture_plan = (
+        build_mixture_plan(
+            train_rows,
+            seed=int(config["project"]["seed"]),
+            extra_draws=int(mixture_cfg["extra_draws"]),
+            target_weights={key: float(value) for key, value in mixture_cfg["target_weights"].items()},
+        )
+        if mixture_cfg
+        else None
+    )
 
     import torch
     from transformers import (
         AutoConfig,
         AutoModelForImageTextToText,
-        AutoProcessor,
         Trainer,
         TrainerCallback,
         TrainingArguments,
@@ -245,13 +267,8 @@ def main() -> None:
         "revision": model_cfg.get("revision"),
         "trust_remote_code": model_cfg.get("trust_remote_code", False),
     }
-    processor = AutoProcessor.from_pretrained(
-        model_cfg["id"],
-        min_pixels=model_cfg.get("min_pixels"),
-        max_pixels=model_cfg.get("max_pixels"),
-        **common,
-    )
-    architecture = AutoConfig.from_pretrained(model_cfg["id"], **common)
+    processor = load_paddleocr_vl_processor(model_cfg["id"], revision=model_cfg.get("revision"))
+    architecture = normalize_paddleocr_vl_config(AutoConfig.from_pretrained(model_cfg["id"], **common))
     if args.validate_only:
         print(
             json.dumps(
@@ -262,7 +279,9 @@ def main() -> None:
                     "architectures": getattr(architecture, "architectures", None),
                     "train_samples": len(train_rows),
                     "validation_samples": len(validation_rows),
-                    "test_samples_excluded_from_trainer": len(test_rows),
+                    "test_samples_excluded_from_trainer": test_count,
+                    "test_manifest_accessed": not forbid_test_access,
+                    "targeted_mixture": mixture_plan.summary(train_rows) if mixture_plan else None,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -272,23 +291,24 @@ def main() -> None:
 
     if not torch.cuda.is_available():
         raise RuntimeError("Actual PaddleOCR-VL 1.6 training requires a CUDA GPU; use --validate-only here")
-    # The official flat config explicitly uses untied embeddings. Transformers
-    # 5.16's compatibility conversion otherwise restores its class default of
-    # True, even though both checkpoint tensors intentionally differ.
-    architecture.tie_word_embeddings = False
-    architecture.text_config.tie_word_embeddings = False
-
     torch.cuda.reset_peak_memory_stats()
     _, total_gpu_memory = torch.cuda.mem_get_info()
     dtype = getattr(torch, model_cfg.get("dtype", "bfloat16"))
     model_load_started = time.perf_counter()
-    model = AutoModelForImageTextToText.from_pretrained(
+    model, loading_info = AutoModelForImageTextToText.from_pretrained(
         model_cfg["id"],
         config=architecture,
         dtype=dtype,
         attn_implementation=model_cfg.get("attention_implementation", "sdpa"),
+        output_loading_info=True,
         **common,
     )
+    loading_problems = {
+        key: sorted(loading_info.get(key, []))
+        for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
+    }
+    if any(loading_problems.values()):
+        raise RuntimeError(f"Continuation source checkpoint did not load exactly: {loading_problems}")
     model.config.use_cache = False
     if model_cfg.get("gradient_checkpointing", True):
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -369,6 +389,12 @@ def main() -> None:
         prompt=model_cfg.get("prompt", "OCR:"),
         max_length=int(model_cfg.get("max_length", 2048)),
     )
+    if mixture_plan is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "mixture_plan.json").write_text(
+            json.dumps(mixture_plan.summary(train_rows), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     class OptimizerStepTimer(TrainerCallback):
         def __init__(self) -> None:
             self.current_start = None
@@ -439,6 +465,50 @@ def main() -> None:
             if self.upload is not None:
                 self.upload.result()
 
+    class ValidationDiagnosticsCallback(TrainerCallback):
+        def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+            diagnostics_cfg = config.get("validation_diagnostics", {})
+            if not diagnostics_cfg.get("enabled", False):
+                return control
+            if int(state.global_step) not in {int(step) for step in diagnostics_cfg["steps"]}:
+                return control
+            report = run_validation_diagnostics(
+                model,
+                processor,
+                validation_rows,
+                prompt=model_cfg.get("prompt", "OCR:"),
+                output_path=Path(args.output_dir)
+                / "validation_diagnostics"
+                / f"step-{state.global_step}.json",
+                step=int(state.global_step),
+            )
+            # These are unweighted canonical-validation metrics.  eval_loss
+            # remains Trainer's complete raw validation loss and the selection
+            # criterion configured below.
+            if metrics is not None:
+                primary = report["groups"]["all_validation"]
+                metrics["eval_exact_accuracy"] = primary["exact_accuracy"]
+                metrics["eval_cer_micro"] = primary["cer_micro"]
+                metrics["eval_cer_macro"] = primary["cer_macro"]
+            return control
+
+    class AdditionalSaveStepsCallback(TrainerCallback):
+        def on_step_end(self, args, state, control, **kwargs):
+            if int(state.global_step) in {int(step) for step in training_cfg.get("additional_save_steps", [])}:
+                # The standard save cadence remains 500 steps.  This closes the
+                # one deliberate gap at the 1,250-step evaluation so an exact,
+                # conversion-aware best checkpoint always exists.
+                control.should_save = True
+            return control
+
+    class MixtureTrainer(Trainer):
+        def __init__(self, *args, mixture_sampler=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.mixture_sampler = mixture_sampler
+
+        def _get_train_sampler(self):
+            return self.mixture_sampler or super()._get_train_sampler()
+
     callbacks = []
     timing_cfg = config.get("timing", {})
     step_timer = None
@@ -451,8 +521,12 @@ def main() -> None:
             hub_api, hub_model_id, os.environ.get("HF_TOKEN")
         )
         callbacks.append(best_checkpoint_callback)
+    if config.get("validation_diagnostics", {}).get("enabled", False):
+        callbacks.append(ValidationDiagnosticsCallback())
+    if training_cfg.get("additional_save_steps"):
+        callbacks.append(AdditionalSaveStepsCallback())
 
-    trainer = Trainer(
+    trainer = MixtureTrainer(
         model=model,
         args=arguments,
         train_dataset=ManifestDataset(train_rows),
@@ -460,6 +534,7 @@ def main() -> None:
         data_collator=collator,
         processing_class=processor,
         callbacks=callbacks,
+        mixture_sampler=DeterministicMixtureSampler(mixture_plan) if mixture_plan else None,
     )
     resume_setting = training_cfg.get("resume_from_checkpoint", "auto")
     if resume_setting == "auto":
@@ -516,7 +591,7 @@ def main() -> None:
         config,
         len(train_rows),
         len(validation_rows),
-        len(test_rows),
+        test_count,
     )
     hub_upload_seconds = 0.0
     if push_to_hub:

@@ -56,3 +56,18 @@ def test_best_selection_requires_evaluation_to_coincide_with_a_save():
     config["training"]["eval_steps"] = 2400
     with pytest.raises(ValueError, match="multiple of save_steps"):
         validate_config(config)
+
+
+def test_v2_continuation_pilot_is_read_only_and_test_excluding():
+    config = load_config(ROOT / "configs/v2_continuation_pilot.yaml")
+    assert config["model"]["id"] == "AlphaBeta07/PaddleOCR-VL-1.6-For-Manga"
+    assert config["model"]["revision"] == "103c97c277d688b31b8adb1bb2228380b77a640b"
+    assert config["data"]["forbid_test_access"] is True
+    assert config["data"]["immutable_test_samples"] == 11063
+    assert config["data"]["targeted_mixture"]["extra_draws"] == 25000
+    assert config["training"]["max_steps"] == 2500
+    assert config["training"]["learning_rate"] == 2.5e-6
+    assert config["training"]["eval_steps"] == 1250
+    assert config["training"]["save_steps"] == 500
+    assert config["training"]["additional_save_steps"] == [1250]
+    assert config["hub"]["push_to_hub"] is False
